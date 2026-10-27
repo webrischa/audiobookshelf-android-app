@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Frame of the speed icon only (brackets + chevrons); the digits are drawn as live text. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M187.077,743.07v74.712c0,32.296 26.23,58.526 58.525,58.526h552.724c32.296,0 58.526,-26.23 58.526,-58.526V743.07h59.077v74.712a117.602,117.602 0,0 1,-117.603 117.603H245.602A117.602,117.602 0,0 1,128 817.782V743.07h59.077z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M187.077,332.17v-74.713c0,-32.295 26.23,-58.525 58.525,-58.525h320.591v-59.077h-320.59A117.602,117.602 0,0 0,128 257.457v74.713h59.077z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M643.15,78.77v253.4L773.12,217.049 643.15,78.769z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M775.876,78.77v253.4l129.97,-115.16 -129.97,-138.24z" />
+</vector>

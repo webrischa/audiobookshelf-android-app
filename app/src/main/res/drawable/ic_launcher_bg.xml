@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Blue-violet diagonal gradient sampled from the reference artwork (#00A0FB top-left to
+  #7D28FA bottom-right, angle 315 = top-left to bottom-right).
+
+  Kept as a GradientDrawable rather than a bitmap: it is resolution independent, so there are no
+  per-density assets to maintain and no resampling artefacts at any launcher size.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+  android:shape="rectangle">
+  <gradient
+    android:angle="315"
+    android:endColor="#FF7D28FA"
+    android:startColor="#FF00A0FB"
+    android:type="linear" />
+</shape>

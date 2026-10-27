@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nothing this app stores may leave the device.
+
+  The app keeps the session token and the server addresses in a DataStore file under the app's
+  private storage. With android:allowBackup="true" that file was eligible for Auto Backup, i.e. it
+  was uploaded to the user's Google Drive and could be restored onto another device — a bearer
+  token for a self-hosted server, copied to a place its owner never chose. Backups are off
+  (allowBackup="false"); these rules are the explicit second line of defence for Android 12+, where
+  cloud backup and device-to-device transfer are configured separately.
+-->
+<data-extraction-rules>
+  <cloud-backup>
+    <exclude domain="root" />
+    <exclude domain="file" />
+    <exclude domain="database" />
+    <exclude domain="sharedpref" />
+    <exclude domain="external" />
+  </cloud-backup>
+  <device-transfer>
+    <exclude domain="root" />
+    <exclude domain="file" />
+    <exclude domain="database" />
+    <exclude domain="sharedpref" />
+    <exclude domain="external" />
+  </device-transfer>
+</data-extraction-rules>
