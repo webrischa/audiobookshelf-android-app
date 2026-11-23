@@ -21,7 +21,6 @@
 **构建**
 
 ```bash
-cd android-native
 ./gradlew :app:assembleDebug # debug
 ./gradlew :app:assembleRelease # release
 ```
