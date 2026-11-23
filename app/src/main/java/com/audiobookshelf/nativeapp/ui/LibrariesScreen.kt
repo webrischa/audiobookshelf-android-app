@@ -1,6 +1,7 @@
 package com.audiobookshelf.nativeapp.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import com.audiobookshelf.nativeapp.AbsViewModel
@@ -88,11 +90,18 @@ fun LibrariesScreen(
           contentPadding = PaddingValues(bottom = LocalMiniPlayerBottomInset.current)
         ) {
           items(vm.libraries, key = { it.id }) { library ->
+            // GlassCard only paints a background/border and does not clip. Without clip-before-
+            // clickable, the default bounded ripple is a rectangle that overshoots the rounded
+            // rim. Use the very same shape as the card so the pressed layer stays coextensive —
+            // same fix as the home screen's bookshelf entry card.
+            val libraryCardShape = RoundedCornerShape(26.dp)
             GlassCard(
               modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 5.dp)
-                .clickable { onOpenLibrary(library) }
+                .clip(libraryCardShape)
+                .clickable { onOpenLibrary(library) },
+              shape = libraryCardShape
             ) {
               ListItem(
                 headlineContent = { Text(library.name) },

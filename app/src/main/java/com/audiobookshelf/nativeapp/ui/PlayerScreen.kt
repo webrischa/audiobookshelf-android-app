@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -45,11 +44,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RippleConfiguration
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -199,6 +201,15 @@ fun PlayerScreen(vm: AbsViewModel, onBack: () -> Unit) {
     absoluteMs = if (state.hasMedia) vm.player.currentAbsolutePositionMs() else vm.resumePositionMs
   )
 
+  // Home gets its ripple colour from Scaffold(contentColor = onBackground), a soft grey-white.
+  // This page has no Scaffold, so LocalContentColor falls back to pure White and Material paints
+  // white ripples with a much higher press alpha — every pressed layer here read brighter and
+  // heavier than the same control on Home. Override the ripple colour only (not content colour),
+  // so text and icon tints stay as authored; the default indication and the two explicit ripple()
+  // calls both resolve their colour through LocalRippleConfiguration.
+  CompositionLocalProvider(
+    LocalRippleConfiguration provides RippleConfiguration(color = MaterialTheme.colorScheme.onBackground)
+  ) {
   Box(Modifier.fillMaxSize()) {
     Box(
       Modifier
@@ -521,6 +532,7 @@ fun PlayerScreen(vm: AbsViewModel, onBack: () -> Unit) {
             overlay = PlayerOverlay.None
           }
         )
+  }
   }
 }
 
@@ -888,27 +900,24 @@ private fun PlayerControls(
         tint = if (previousChapter != null) Color.White else Color.White.copy(alpha = 0.3f)
       )
     }
-    // The pressed layer is a 90dp round state layer around the 74dp circle, so a visible 8dp
-    // halo shows outside the fill. The 74dp outer box keeps the row layout unchanged; the inner
-    // box has to use requiredSize, not size — size() clamps to the parent's 74dp max constraint
-    // and the ripple silently collapses back to the circle's diameter. requiredSize lets the
-    // child overflow (Box does not clip children) while the outer box still measures 74dp.
-    // A bounded ripple with an explicit radius stays centred on the button instead of following
-    // the touch point, which is what makes it read like the other controls' state layers.
+    // The pressed layer is clipped to the same 74dp circle as the visible fill, so the ripple
+    // never spreads past the round button. A bounded ripple whose radius equals the circle's
+    // radius stays centred on the button instead of following the touch point, which is what
+    // makes it read like the other controls' state layers.
     Box(
       modifier = Modifier.size(74.dp),
       contentAlignment = Alignment.Center
     ) {
       Box(
         modifier = Modifier
-          .requiredSize(90.dp)
+          .size(74.dp)
           .clip(CircleShape)
           .sleepTimerStateDescription(sleepRemaining)
           // A second tap while the session is being created would cancel the request in flight and
           // start over, making the wait longer.
           .clickable(
             interactionSource = remember { MutableInteractionSource() },
-            indication = ripple(bounded = true, radius = 45.dp),
+            indication = ripple(bounded = true, radius = 37.dp),
             enabled = !preparing,
             onClick = onTogglePlay
           ),

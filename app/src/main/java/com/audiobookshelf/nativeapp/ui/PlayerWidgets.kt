@@ -413,9 +413,9 @@ internal fun SkipIntroOutroSheet(
 
     SheetHeader("片头片尾设置") { onDismiss() }
     SheetCard {
-      SkipSlider("片头", introValue) { introValue = it }
+      SkipSlider("片头跳过", introValue) { introValue = it }
       Spacer(Modifier.height(20.dp))
-      SkipSlider("片尾", outroValue) { outroValue = it }
+      SkipSlider("片尾跳过", outroValue) { outroValue = it }
     }
     Spacer(Modifier.height(16.dp))
     Row(
