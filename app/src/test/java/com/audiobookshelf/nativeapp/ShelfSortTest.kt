@@ -80,17 +80,6 @@ class ShelfSortTest {
   }
 
   @Test
-  fun `the first shelf refresh is never throttled`() {
-    assertTrue(shouldRefreshHome(lastAt = 0L, now = 1_000L, minGapMs = 20_000L))
-  }
-
-  @Test
-  fun `navigation and foreground share one refresh budget`() {
-    assertFalse(shouldRefreshHome(lastAt = 10_000L, now = 25_000L, minGapMs = 20_000L))
-    assertTrue(shouldRefreshHome(lastAt = 10_000L, now = 30_000L, minGapMs = 20_000L))
-  }
-
-  @Test
   fun `a shelf row only resets when its own batch changed`() {
     val original = shelfBatchKey(listOf(item("a"), item("b")))
     // Same books in the same order, even from fresh DTOs after a silent refresh: no reset.

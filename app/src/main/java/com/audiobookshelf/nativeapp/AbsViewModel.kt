@@ -365,9 +365,6 @@ class AbsViewModel(application: Application) : AndroidViewModel(application) {
    */
   fun onAppForeground() {
     if (initializing || session == null) return
-    // Playback keeps reporting progress while this activity is stopped. Reconcile the shelves
-    // with the server on the way back; the home screen's own refresh shares the same budget.
-    refreshHomeSilently()
     // The picker and other external activities also stop and start this one: a resolution that ran
     // a moment ago is still valid, and repeating it would cost a probe for nothing.
     if (SystemClock.elapsedRealtime() - lastResolveAt < FOREGROUND_RESOLVE_MIN_GAP_MS) return
@@ -389,9 +386,11 @@ class AbsViewModel(application: Application) : AndroidViewModel(application) {
   private var searchGeneration = 0
   private var homeJob: Job? = null
   internal var homeLibraryId: String? = null
-  /** In-flight silent shelf re-read, see [refreshHomeSilently]. */
+  /** In-flight manual shelf re-read, started only by the discover shelf's refresh button. */
   private var homeRefreshJob: Job? = null
-  private var lastHomeRefreshAt = 0L
+  /** Drives the spinner / disabled state of that button. */
+  var homeRefreshing by mutableStateOf(false)
+    private set
 
   /**
    * Books that just started playing but whose progress the server has not confirmed yet: progress
@@ -737,7 +736,7 @@ class AbsViewModel(application: Application) : AndroidViewModel(application) {
     homeJob = null
     homeRefreshJob?.cancel()
     homeRefreshJob = null
-    lastHomeRefreshAt = 0L
+    homeRefreshing = false
     pinnedRecent.clear()
     homeLibraryId = null
     homeLoadedLibraryId = null
@@ -798,14 +797,12 @@ class AbsViewModel(application: Application) : AndroidViewModel(application) {
   fun loadHome(libraryId: String, force: Boolean = false) {
     if (libraryId.isBlank()) return
     val sameLibrary = homeLibraryId == libraryId
-    // Same library with content on screen (or a load in flight): keep the list, refresh in place
+    // Same library with content on screen (or a load in flight): keep the list exactly as it was.
+    // Opening a detail page and coming back must not re-fetch the shelves — the server re-randomises
+    // "discover" on every read, and that used to swap the cards under the user's finger. Only the
+    // refresh button on the discover title calls [refreshHome].
     if (!force && sameLibrary && (shelves.isNotEmpty() || homeJob?.isActive == true)) {
-      // A book that started playing on another screen is already pinned locally, so refreshing
-      // here only has to reconcile server-side changes (another device, a book finished). Like the
-      // original client this happens on every mount of the home screen, but throttled: navigating
-      // back and forth must not fire the same two requests on every tap.
       publishShelves(reorderContinueListening(shelves))
-      refreshHomeSilently()
       return
     }
     if (!sameLibrary) {
@@ -832,12 +829,7 @@ class AbsViewModel(application: Application) : AndroidViewModel(application) {
       } catch (e: Exception) {
         if (homeLibraryId == libraryId) error = e.userMessage()
       } finally {
-        if (homeLibraryId == libraryId) {
-          homeLoading = false
-          // A full load just fetched exactly what a silent refresh would. Without this the first
-          // navigation back to the home screen duplicated the same two requests immediately.
-          lastHomeRefreshAt = SystemClock.elapsedRealtime()
-        }
+        if (homeLibraryId == libraryId) homeLoading = false
       }
     }
   }
@@ -851,22 +843,21 @@ class AbsViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   /**
-   * Re-reads /api/me and the personalized shelves without clearing what is already on screen.
+   * Re-reads the personalized shelves, driven only by the refresh button on the discover title.
    *
-   * Called only on explicit boundaries — entering the home screen and returning to the foreground
-   * — and throttled, because those two often fire within milliseconds of each other. Progress
-   * writes during playback do NOT come here: they are already mirrored into the local cache and
-   * only need a local reorder, not a network round trip.
+   * There is deliberately no automatic trigger: mounting the home screen (e.g. returning from a
+   * detail page) and coming back to the foreground both keep whatever the user last saw. Progress
+   * writes during playback are mirrored locally and only need a local reorder, not a network trip.
    */
-  private fun refreshHomeSilently() {
+  fun refreshHome() {
     val libraryId = homeLibraryId ?: return
     if (homeLoadedLibraryId != libraryId || homeJob?.isActive == true) return
+    // A second tap while a refresh is running does not stack requests.
     if (homeRefreshJob?.isActive == true) return
-    val now = SystemClock.elapsedRealtime()
-    if (!shouldRefreshHome(lastHomeRefreshAt, now, HOME_REFRESH_MIN_GAP_MS)) return
-    lastHomeRefreshAt = now
-    AppLog.i("AbsHome", "refresh shelves for $libraryId")
+    homeRefreshing = true
+    AppLog.i("AbsHome", "manual shelves refresh for $libraryId")
     homeRefreshJob = viewModelScope.launch {
+      error = null
       try {
         repository.refreshProgress()
         val loaded = repository.personalized(libraryId)
@@ -875,8 +866,10 @@ class AbsViewModel(application: Application) : AndroidViewModel(application) {
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
-        // A silent refresh must not put an error banner over a perfectly usable shelf.
-        AppLog.w("AbsHome", "silent home refresh failed", e)
+        // An explicit refresh must tell the user why nothing changed, unlike the old silent one.
+        if (homeLibraryId == libraryId) error = e.userMessage()
+      } finally {
+        homeRefreshing = false
       }
     }
   }

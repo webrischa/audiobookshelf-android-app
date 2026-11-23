@@ -45,9 +45,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.runBlocking
 
 /**
- * Pure decisions and tuning constants used by AbsViewModel: refresh throttles, chapter-jump
- * routing, "continue listening" shelf matching and ordering. Kept free of Android/Compose state so
- * the rules stay covered by JVM tests. Same package, so internal is enough for the view model.
+ * Pure decisions and tuning constants used by AbsViewModel: chapter-jump routing, "continue
+ * listening" shelf matching and ordering. Kept free of Android/Compose state so the rules stay
+ * covered by JVM tests. Same package, so internal is enough for the view model.
  */
 /** Wired, USB and Bluetooth audio outputs all count as "headphones". */
 internal fun AudioDeviceInfo.isHeadphone(): Boolean = when (type) {
@@ -82,16 +82,6 @@ internal const val NETWORK_WATCHDOG_MS = 20_000L
 
 /** Minimum gap between two foreground-triggered address resolutions. */
 internal const val FOREGROUND_RESOLVE_MIN_GAP_MS = 10_000L
-
-/**
- * Minimum gap between two shelf re-reads. Entering the home screen and returning to the foreground
- * share this budget; playback progress updates never spend it.
- */
-internal const val HOME_REFRESH_MIN_GAP_MS = 20_000L
-
-/** Throttle policy kept pure so the refresh cadence is pinned down by a unit test. */
-internal fun shouldRefreshHome(lastAt: Long, now: Long, minGapMs: Long): Boolean =
-  lastAt <= 0L || now - lastAt >= minGapMs
 
 /**
  * Identity of one shelf row's current batch, used as the key of that row's reset effect.

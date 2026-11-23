@@ -3,6 +3,7 @@ package com.audiobookshelf.nativeapp.ui
 import com.audiobookshelf.nativeapp.util.AppLog
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,11 +16,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
@@ -27,6 +30,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -34,6 +38,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ripple
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.audiobookshelf.nativeapp.AbsViewModel
 import com.audiobookshelf.nativeapp.batchChanged
+import com.audiobookshelf.nativeapp.data.ShelfDto
 import com.audiobookshelf.nativeapp.shelfBatchKey
 
 @Composable
@@ -170,11 +176,49 @@ fun HomeScreen(
           vm.shelves.filter { it.entities.isNotEmpty() }.forEach { shelf ->
             val shelfKey = shelf.id.ifBlank { shelf.label }
             item(key = shelfKey) {
-              Text(
-                text = shelfLabel(shelf.label, shelf.labelStringKey),
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 8.dp)
-              )
+              Row(
+                modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Text(
+                  text = shelfLabel(shelf.label, shelf.labelStringKey),
+                  style = MaterialTheme.typography.titleSmall
+                )
+                // The only shelf whose contents change on a re-read. No automatic refresh is left
+                // in the view model, so this is the sole way to re-roll it.
+                if (isDiscoverShelf(shelf)) {
+                  Box(
+                    modifier = Modifier
+                      .size(32.dp)
+                      // Compact inline action: a full 48dp IconButton towered over the 20dp shelf
+                      // label. Clip before clickable so the bounded ripple stays a circle the size
+                      // of the button, never a square larger than it.
+                      .clip(CircleShape)
+                      .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true, radius = 16.dp),
+                        enabled = !vm.homeRefreshing,
+                        onClick = { vm.refreshHome() }
+                      ),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    if (vm.homeRefreshing) {
+                      CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                    } else {
+                      Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = "刷新发现",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                    }
+                  }
+                }
+              }
             }
             item(key = "$shelfKey-items") {
               // Hoisted to AbsNav: NavHost disposes HOME on a detail/player round trip, but the
@@ -243,6 +287,16 @@ private fun shelfLabel(label: String, labelStringKey: String?): String {
     else -> label
   }
 }
+
+/**
+ * The discover shelf is the one the server re-randomises on every read. Matching on the stable id
+ * first, then the localisation key / label, mirrors how "continue listening" is recognised.
+ */
+private fun isDiscoverShelf(shelf: ShelfDto): Boolean =
+  shelf.id.equals("discover", ignoreCase = true) ||
+    shelf.labelStringKey.equals("LabelDiscover", ignoreCase = true) ||
+    shelf.label.trim().equals("discover", ignoreCase = true) ||
+    shelf.label.trim() == "发现"
 
 /**
  * Library home header. The left slot is the library entry (icon, name, chevron) that opens the
