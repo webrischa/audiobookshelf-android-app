@@ -32,6 +32,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -234,7 +235,7 @@ fun AbsNav(vm: AbsViewModel) {
                 }
               },
               onBack = if (canGoBack) {
-                { navController.popBackStack() }
+                { navController.popBackStackOrKeepRoot() }
               } else {
                 null
               },
@@ -274,7 +275,7 @@ fun AbsNav(vm: AbsViewModel) {
                 vm.openSeries(series)
                 navController.navigate(Routes.SERIES) { launchSingleTop = true }
               },
-              onBack = { navController.popBackStack() },
+              onBack = { navController.popBackStackOrKeepRoot() },
               onSearch = { navController.navigate(Routes.search(libraryId)) },
               onSettings = { navController.navigate(Routes.SETTINGS) }
             )
@@ -289,7 +290,7 @@ fun AbsNav(vm: AbsViewModel) {
               },
               onBack = {
                 vm.closeSeries()
-                navController.popBackStack()
+                navController.popBackStackOrKeepRoot()
               }
             )
           }
@@ -299,7 +300,7 @@ fun AbsNav(vm: AbsViewModel) {
             ItemScreen(
               vm = vm,
               itemId = itemId,
-              onBack = { navController.popBackStack() },
+              onBack = { navController.popBackStackOrKeepRoot() },
               // Same entry as the mini bar: single top, so tapping play twice cannot stack players
               onOpenPlayer = {
                 AppLog.tapTrace("NAV_PLAYER", "from=detail")
@@ -317,7 +318,7 @@ fun AbsNav(vm: AbsViewModel) {
                 AppLog.tapTrace("NAV_ITEM", itemId)
                 navController.navigate(Routes.item(itemId))
               },
-              onBack = { navController.popBackStack() }
+              onBack = { navController.popBackStackOrKeepRoot() }
             )
           }
 
@@ -327,13 +328,13 @@ fun AbsNav(vm: AbsViewModel) {
             exitTransition = { slideOutVertically(targetOffsetY = { it }, animationSpec = tween(260)) },
             popExitTransition = { slideOutVertically(targetOffsetY = { it }, animationSpec = tween(260)) }
           ) {
-            PlayerScreen(vm = vm, onBack = { navController.popBackStack() })
+            PlayerScreen(vm = vm, onBack = { navController.popBackStackOrKeepRoot() })
           }
 
           composable(Routes.SETTINGS) {
             SettingsScreen(
               vm = vm,
-              onBack = { navController.popBackStack() },
+              onBack = { navController.popBackStackOrKeepRoot() },
               onLoggedOut = {
                 navController.navigate(Routes.LOGIN) {
                   popUpTo(0) { inclusive = true }
@@ -425,6 +426,22 @@ private fun MiniPlayerHost(
     onOpen = onOpen,
     onTogglePlayPause = { vm.togglePlayPause() }
   )
+}
+
+/**
+ * Pops one entry only when there is still a destination underneath to return to.
+ *
+ * A plain popBackStack() is not enough: the 220 ms pop transition keeps the outgoing screen in
+ * the composition, so a second fast tap on its back arrow can pop again. The first pop has already
+ * removed the top entry synchronously, so that second call targets the destination below — here
+ * HOME — and empties the whole stack, leaving NavHost with nothing to show (a blank page).
+ * Check the *live* previousBackStackEntry rather than a remembered "can go back" value, so the
+ * guard sees the stack after the first pop. The system Back key is unaffected: NavController
+ * disables its own back callback at the root and BackgroundOnBack takes over there.
+ */
+private fun NavController.popBackStackOrKeepRoot(): Boolean {
+  if (previousBackStackEntry == null) return false
+  return popBackStack()
 }
 
 /**
