@@ -140,12 +140,20 @@ class PlaybackService : MediaSessionService() {
   private var errorRetryJob: Job? = null
   /** Start of the current error streak; bounds the whole retry window, not just one attempt. */
   private var errorRetryStartedAt = 0L
-  /** Completed early when the default network becomes usable again. */
+  /**
+   * Wakes the retry loop's current `withTimeout` the moment the network becomes usable again.
+   * Only lives inside that wait; the durable record is [networkRecoveryPending].
+   */
   private var networkRetrySignal: CompletableDeferred<Unit>? = null
-  /** Coalesces the burst of callbacks a single VPN reconnect produces. */
-  private var networkSignalDebounce: Job? = null
+  /**
+   * Level-triggered memory of a network recovery. A signal that arrived while the loop was
+   * between two waits — or before it started — used to hit a null [networkRetrySignal] and be
+   * dropped, so the stream kept backing off even though the network was already back. The
+   * callback sets this unconditionally; the loop consumes it at the top of every iteration and
+   * skips the backoff. Setting it repeatedly for one reconnect is idempotent.
+   */
+  private var networkRecoveryPending = false
   private var networkCallback: ConnectivityManager.NetworkCallback? = null
-  private var lastNetworkValidated = false
   /** Log "waiting for network" once per streak instead of once per loop. */
   private var loggedWaitingForNetwork = false
 
@@ -295,23 +303,19 @@ class PlaybackService : MediaSessionService() {
     // immediately, with timed retries as the fallback rather than the only trigger.
     runCatching {
       val connectivity = getSystemService(ConnectivityManager::class.java)
-      // Seed with the state at registration: otherwise the first capabilities callback looks like
-      // a transition and wakes a retry that has not even started yet.
-      lastNetworkValidated = connectivity?.activeNetwork?.let {
-        connectivity.getNetworkCapabilities(it)
-          ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-      } == true
       val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
           signalNetworkRecovery("available")
         }
 
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-          // Fires continuously while the signal fluctuates: only a usability transition matters.
-          val validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-          if (validated == lastNetworkValidated) return
-          lastNetworkValidated = validated
-          if (validated) signalNetworkRecovery("validated")
+          // Do not gate on a VALIDATED *transition*. A Wi-Fi data stall is repaired in place: the
+          // link keeps the same network and VALIDATED can stay true throughout, so the only usable
+          // signal is a validated capabilities callback. Reporting it is cheap because setting the
+          // pending flag is idempotent and the retry loop only acts on it while a stream is stalled.
+          if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+            signalNetworkRecovery("validated")
+          }
         }
       }
       networkCallback = callback
@@ -1174,11 +1178,13 @@ class PlaybackService : MediaSessionService() {
    * the media card disappeared". Only I/O and timeout errors are retried: a parse error or a 404
    * will not heal by itself.
    *
-   * Each wait is a [CompletableDeferred] that the network callback completes early, so a network
-   * recovery retries immediately instead of waiting for the next backoff tick. Once the timed
-   * budget is spent, the loop keeps listening for a network signal at low frequency (up to
-   * [ERROR_RETRY_TOTAL_MS]) rather than giving up permanently — the old "six failures, then tap
-   * play" behaviour. [decideStreamRetry] keeps every exit condition in one testable place.
+   * Each wait is a [CompletableDeferred] the network callback completes early; a recovery that
+   * lands between two waits is remembered in a durable flag and consumed at the next iteration.
+   * Either way a network recovery retries immediately instead of waiting for the next backoff
+   * tick. Once the timed budget is spent, the loop keeps listening for a network signal at low
+   * frequency (up to [ERROR_RETRY_TOTAL_MS]) rather than giving up permanently — the old "six
+   * failures, then tap play" behaviour. [decideStreamRetry] keeps every exit condition in one
+   * testable place.
    */
   private fun scheduleErrorRetry(player: Player, error: PlaybackException) {
     if (error.errorCode !in RETRYABLE_ERROR_CODES) {
@@ -1193,6 +1199,11 @@ class PlaybackService : MediaSessionService() {
     loggedWaitingForNetwork = false
     errorRetryJob = scope.launch {
       while (isActive) {
+        // Consume a recovery that arrived before this wait began (in the gap between two waits,
+        // or while the loop had not yet installed its signal). Such an event used to be dropped by
+        // signalNetworkRecovery because networkRetrySignal was null; the stream then kept backing
+        // off even though the network was already back.
+        val recoveredBeforeWait = consumeNetworkRecovery()
         val elapsed = SystemClock.elapsedRealtime() - errorRetryStartedAt
         val remaining = ERROR_RETRY_TOTAL_MS - elapsed
         if (remaining <= 0) {
@@ -1210,15 +1221,21 @@ class PlaybackService : MediaSessionService() {
           }
           remaining.coerceAtMost(ERROR_RETRY_WAIT_MS)
         }
-        val signal = CompletableDeferred<Unit>()
-        networkRetrySignal = signal
-        val wokeByNetwork = try {
-          withTimeout(waitMs) { signal.await() }
+        // A recovery already pending means there is nothing to wait for: skip the backoff and
+        // prepare immediately. Only install a fresh signal for the genuinely-still-waiting case.
+        val wokeByNetwork = if (recoveredBeforeWait) {
           true
-        } catch (_: TimeoutCancellationException) {
-          false
-        } finally {
-          if (networkRetrySignal === signal) networkRetrySignal = null
+        } else {
+          val signal = CompletableDeferred<Unit>()
+          networkRetrySignal = signal
+          try {
+            withTimeout(waitMs) { signal.await() }
+            true
+          } catch (_: TimeoutCancellationException) {
+            false
+          } finally {
+            if (networkRetrySignal === signal) networkRetrySignal = null
+          }
         }
         val current = mediaSession?.player ?: run {
           resetStreamRetryState()
@@ -1268,16 +1285,30 @@ class PlaybackService : MediaSessionService() {
     }
   }
 
-  /** Wakes a pending stream retry; a network event must never touch a stream that is playing fine. */
+  /**
+   * Records a network recovery for the stream retry loop. Two paths matter and both must survive:
+   *  - the loop is currently waiting: complete its signal to wake it immediately;
+   *  - the loop is between waits (or not started yet): no signal exists, so set the durable flag
+   *    that the next iteration consumes instead of backing off.
+   * The flag is set unconditionally (no "retry active" guard): a recovery landing in the gap
+   * between the error callback and the loop's launch must survive too. With no retry streak it is
+   * harmless — the next streak consumes it, and reset clears it.
+   */
   private fun signalNetworkRecovery(reason: String) {
-    if (networkRetrySignal == null) return
-    networkSignalDebounce?.cancel()
-    networkSignalDebounce = scope.launch {
-      delay(NETWORK_SIGNAL_DEBOUNCE_MS)
-      val signal = networkRetrySignal ?: return@launch
+    networkRecoveryPending = true
+    val signal = networkRetrySignal
+    if (signal != null && !signal.isCompleted) {
       AppLog.i("PlaybackService", "network $reason, waking stream retry")
       signal.complete(Unit)
     }
+  }
+
+  /** Takes the pending recovery exactly once; later loop iterations see no signal. */
+  private fun consumeNetworkRecovery(): Boolean {
+    if (!networkRecoveryPending) return false
+    networkRecoveryPending = false
+    AppLog.i("PlaybackService", "network recovery picked up, skipping backoff")
+    return true
   }
 
   /** Fallback for OEMs that restore the link without dispatching a usable network callback. */
@@ -1294,8 +1325,7 @@ class PlaybackService : MediaSessionService() {
     errorRetryStartedAt = 0L
     loggedWaitingForNetwork = false
     networkRetrySignal = null
-    networkSignalDebounce?.cancel()
-    networkSignalDebounce = null
+    networkRecoveryPending = false
     errorRetryJob = null
   }
 
@@ -1449,8 +1479,13 @@ class PlaybackService : MediaSessionService() {
     private const val IDLE_CHAPTER_TICK_MS = 2_000L
     /** How long the current track plays before its successor is read into the cache. */
     private const val PRELOAD_SETTLE_MS = 10_000L
-    /** Delay before a failed preload may be tried again for the same track. */
-    private const val PRELOAD_RETRY_MS = 30_000L
+    /**
+     * Delay before a failed preload may be tried again for the same track. Kept short: a Wi-Fi
+     * data stall is repaired in seconds, and the next chapter's head must be on disk by the time
+     * the playhead reaches it — a 30 s cooldown used to leave that window empty even after the
+     * link came back. The per-read [AudioCache.TIME_BUDGET_MS] still bounds the cost of a retry.
+     */
+    private const val PRELOAD_RETRY_MS = 5_000L
     /** Gain ramp around a chapter jump: out, then back in once the new position is playing. */
     private const val FADE_OUT_MS = 120L
     private const val FADE_IN_MS = 180L
@@ -1507,8 +1542,6 @@ class PlaybackService : MediaSessionService() {
     private const val ERROR_RETRY_TOTAL_MS = 600_000L
     /** Low-frequency fallback check while waiting for a network callback that may never arrive. */
     private const val ERROR_RETRY_WAIT_MS = 30_000L
-    /** Coalesces onAvailable + onCapabilitiesChanged from a single VPN reconnect. */
-    private const val NETWORK_SIGNAL_DEBOUNCE_MS = 300L
 
     /** Only failures that can heal when the network recovers. */
     private val RETRYABLE_ERROR_CODES = setOf(
